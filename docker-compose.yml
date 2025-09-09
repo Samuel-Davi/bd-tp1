@@ -1,0 +1,10 @@
+version: "3.9"
+services:
+
+  app:
+    build: .
+    volumes:
+      - ./src:/app/src
+      - ./data:/data
+      - ./out:/app/out
+    working_dir: /app
