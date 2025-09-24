@@ -3,16 +3,21 @@ import argparse
 import psycopg
 import pandas as pd
 import os
+pd.set_option("display.max_colwidth", None) 
+pd.set_option("display.width", 120)         
+
+
+from tabulate import tabulate
 
 def run_query(conn, query, params=None, output=None, filename=None):
-    """Executa query, imprime resultado e salva CSV opcionalmente"""
     df = pd.read_sql(query, conn, params=params)
     print("\n=== Resultado ===")
-    print(df.head(20))  # mostra só os primeiros 20 no terminal
+    print(tabulate(df.head(20), headers="keys", tablefmt="psql", showindex=False))
     if output and filename:
         os.makedirs(output, exist_ok=True)
         df.to_csv(os.path.join(output, filename), index=False)
     return df
+
 
 def q1(conn, asin, output):
     print("\n[Q1] Top 5 comentários úteis positivos e negativos")
