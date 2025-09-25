@@ -35,7 +35,7 @@ CREATE TABLE Avaliacao (
     id_produto INT NOT NULL,
     id_cliente VARCHAR(70) NOT NULL,
     data DATE NOT NULL,
-    hora TIME NOT NULL,
+    hora TIME NULL,
     rating INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
     votos INTEGER NOT NULL,
     helpful INTEGER NOT NULL,
