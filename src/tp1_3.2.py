@@ -6,6 +6,8 @@ from datetime import datetime
 import csv
 import os
 import tempfile
+import urllib.request
+import gzip
 
 # Regex pra aceitar cutomer e customer no meta
 REVIEW_REGEX = re.compile(
@@ -13,6 +15,21 @@ REVIEW_REGEX = re.compile(
     re.IGNORECASE
 )
 
+DATA_DIR = '/data'
+GZ_URL = 'https://snap.stanford.edu/data/bigdata/amazon/amazon-meta.txt.gz'
+GZ_PATH = os.path.join(DATA_DIR, 'amazon-meta.txt.gz')
+INPUT_PATH = os.path.join(DATA_DIR, 'snap_amazon.txt')
+
+def download_and_extract():
+    if not os.path.exists(INPUT_PATH):
+        print('Baixando arquivo amazon-meta.txt.gz...')
+        urllib.request.urlretrieve(GZ_URL, GZ_PATH)
+        print('Descompactando...')
+        with gzip.open(GZ_PATH, 'rb') as gz_in, open(INPUT_PATH, 'wb') as txt_out:
+            txt_out.write(gz_in.read())
+        print('Arquivo baixado e descompactado.')
+    else:
+        print('Arquivo snap_amazon.txt já existe.')
 
 def parse_file(file_path):
     products = []
@@ -162,6 +179,8 @@ def main():
     parser.add_argument("--input", required=True)
     parser.add_argument("--batch-size", type=int, default=50000, help="Tamanho do batch de inserts (default=50000)")
     args = parser.parse_args()
+
+    download_and_extract()
 
     print(f"[INFO] Lendo arquivo {args.input}...")
     products, reviews, customers, similars = parse_file(args.input)
