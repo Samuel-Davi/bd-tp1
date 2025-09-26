@@ -1,22 +1,29 @@
 # src/tp1_3.3.py
 import argparse
 import psycopg
-import pandas as pd
-import os
-pd.set_option("display.max_colwidth", None) 
-pd.set_option("display.width", 120)         
-
-
 from tabulate import tabulate
+import os
+
 
 def run_query(conn, query, params=None, output=None, filename=None):
-    df = pd.read_sql(query, conn, params=params)
+    with conn.cursor() as cur:
+        cur.execute(query, params or {})
+        rows = cur.fetchall()
+        headers = [desc[0] for desc in cur.description]
+
     print("\n=== Resultado ===")
-    print(tabulate(df.head(20), headers="keys", tablefmt="psql", showindex=False))
+    print(tabulate(rows[:20], headers=headers, tablefmt="psql", showindex=False))
+
     if output and filename:
         os.makedirs(output, exist_ok=True)
-        df.to_csv(os.path.join(output, filename), index=False)
-    return df
+        filepath = os.path.join(output, filename)
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(",".join(headers) + "\n")
+            for row in rows:
+                f.write(",".join(str(v) if v is not None else "" for v in row) + "\n")
+        print(f"[INFO] Resultado exportado para {filepath}")
+
+    return rows
 
 
 def q1(conn, asin, output):
@@ -24,27 +31,28 @@ def q1(conn, asin, output):
     query = """
     (SELECT a.data, a.id_cliente, a.rating, a.votos, a.helpful
      FROM avaliacao a
-     JOIN produto p ON a.id_produto = p.id_produto
+     JOIN produto p ON a.id_produto = p.asin
      WHERE p.asin = %(asin)s
      ORDER BY a.helpful DESC, a.rating DESC
      LIMIT 5)
     UNION
     (SELECT a.data, a.id_cliente, a.rating, a.votos, a.helpful
      FROM avaliacao a
-     JOIN produto p ON a.id_produto = p.id_produto
+     JOIN produto p ON a.id_produto = p.asin
      WHERE p.asin = %(asin)s
      ORDER BY a.helpful DESC, a.rating ASC
      LIMIT 5);
     """
     return run_query(conn, query, {"asin": asin}, output, "q1_reviews.csv")
 
+
 def q2(conn, asin, output):
     print("\n[Q2] Produtos similares com melhor salesrank")
     query = """
     SELECT ps.asin, ps.nome_produto, ps.posicao_ranking
     FROM "Similar" s
-    JOIN produto p ON s.id_produto = p.id_produto
-    JOIN produto ps ON s.id_produto_similar = ps.id_produto
+    JOIN produto p ON s.id_asin = p.asin
+    JOIN produto ps ON s.id_asin_similar = ps.asin
     WHERE p.asin = %(asin)s
       AND ps.posicao_ranking < p.posicao_ranking
     ORDER BY ps.posicao_ranking ASC
@@ -52,17 +60,19 @@ def q2(conn, asin, output):
     """
     return run_query(conn, query, {"asin": asin}, output, "q2_similares.csv")
 
+
 def q3(conn, asin, output):
     print("\n[Q3] Evolução diária da média de avaliações")
     query = """
     SELECT a.data AS dia, AVG(a.rating) AS media_rating
     FROM avaliacao a
-    JOIN produto p ON a.id_produto = p.id_produto
+    JOIN produto p ON a.id_produto = p.asin
     WHERE p.asin = %(asin)s
     GROUP BY a.data
     ORDER BY dia;
     """
     return run_query(conn, query, {"asin": asin}, output, "q3_evolucao.csv")
+
 
 def q4(conn, output):
     print("\n[Q4] Top 10 produtos líderes de venda em cada grupo")
@@ -79,17 +89,19 @@ def q4(conn, output):
     """
     return run_query(conn, query, None, output, "q4_top10_vendas.csv")
 
+
 def q5(conn, output):
     print("\n[Q5] Top 10 produtos com maior média de avaliações úteis positivas")
     query = """
     SELECT p.asin, p.nome_produto, AVG(a.helpful) AS media_util
     FROM avaliacao a
-    JOIN produto p ON a.id_produto = p.id_produto
+    JOIN produto p ON a.id_produto = p.asin
     GROUP BY p.asin, p.nome_produto
     ORDER BY media_util DESC
     LIMIT 10;
     """
     return run_query(conn, query, None, output, "q5_top10_util.csv")
+
 
 def q6(conn, output):
     print("\n[Q6] Top 5 categorias com maior média de avaliações úteis positivas por produto")
@@ -104,17 +116,19 @@ def q6(conn, output):
     """
     return run_query(conn, query, None, output, "q6_top5_categorias.csv")
 
+
 def q7(conn, output):
     print("\n[Q7] Top 10 clientes que mais comentaram por grupo")
     query = """
     SELECT p.grupo, a.id_cliente, COUNT(*) AS qtd_comentarios
     FROM avaliacao a
-    JOIN produto p ON a.id_produto = p.id_produto
+    JOIN produto p ON a.id_produto = p.asin
     GROUP BY p.grupo, a.id_cliente
     ORDER BY p.grupo, qtd_comentarios DESC
     LIMIT 10;
     """
     return run_query(conn, query, None, output, "q7_top10_clientes.csv")
+
 
 def main():
     parser = argparse.ArgumentParser(description="Dashboard TP1")
@@ -137,6 +151,7 @@ def main():
         q5(conn, args.output)
         q6(conn, args.output)
         q7(conn, args.output)
+
 
 if __name__ == "__main__":
     main()
