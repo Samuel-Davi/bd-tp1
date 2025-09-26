@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 import argparse
 import psycopg
-import sys
 import re
 from datetime import datetime
 import csv
 import os
 import tempfile
 
-# Regex aceitando "customer" ou "cutomer"
+# Regex pra aceitar cutomer e customer no meta
 REVIEW_REGEX = re.compile(
     r"(\d{4}-\d{1,2}-\d{1,2})\s+(?:cutomer|customer):\s*(\S+)\s+rating:\s*(\d+)\s+votes:\s*(\d+)\s+helpful:\s*(\d+)",
     re.IGNORECASE
@@ -18,7 +17,6 @@ REVIEW_REGEX = re.compile(
 def parse_file(file_path):
     products = []
     similars = []
-    categories = []
     reviews = []
     customers = set()
     current_product = {}
@@ -43,9 +41,9 @@ def parse_file(file_path):
                     current_product["salesrank"] = None
             elif line.startswith("similar:"):
                 parts = line.split()
-                main_id = current_product.get("id_produto")
+                main_asin = current_product.get("asin")
                 for sim_asin in parts[2:]:
-                    similars.append((main_id, sim_asin))
+                    similars.append((main_asin, sim_asin))
             elif line.startswith("|"):
                 cats = [c.strip() for c in line.split("|") if c.strip()]
                 current_product.setdefault("categories", []).extend(cats)
@@ -58,8 +56,8 @@ def parse_file(file_path):
                         rating = int(match.group(3))
                         votes = int(match.group(4))
                         helpful = int(match.group(5))
-                        id_produto = current_product.get("id_produto")
-                        reviews.append((id_produto, customer_id, review_date, None, rating, votes, helpful))
+                        asin = current_product.get("asin")
+                        reviews.append((asin, customer_id, review_date, "00:00:00", rating, votes, helpful))
                         customers.add(customer_id)
                     except Exception as e:
                         print(f"[WARN] Review ignorado: {line} ({e})")
@@ -67,7 +65,7 @@ def parse_file(file_path):
         if current_product:
             products.append(current_product)
 
-    return products, reviews, customers, similars, categories
+    return products, reviews, customers, similars
 
 
 def batch_insert(cur, query, data, batch_size=10000, entity=""):
@@ -80,7 +78,7 @@ def batch_insert(cur, query, data, batch_size=10000, entity=""):
     return total
 
 
-def insert_into_db(products, reviews, customers, similars, categories, conn, batch_size=10000):
+def insert_into_db(products, reviews, customers, similars, conn, batch_size=10000):
     with conn.cursor() as cur:
         # Produtos
         product_values = [
@@ -108,7 +106,7 @@ def insert_into_db(products, reviews, customers, similars, categories, conn, bat
         for p in products:
             for cat in set(p.get("categories", [])):
                 if cat in cat_map:
-                    prod_cat_values.append((p["id_produto"], cat_map[cat]))
+                    prod_cat_values.append((p["asin"], cat_map[cat]))
         count_pc = batch_insert(cur,
             "INSERT INTO Produto_Categoria (id_produto, id_categoria) VALUES (%s,%s) ON CONFLICT DO NOTHING;",
             prod_cat_values, batch_size, "produto-categoria")
@@ -118,22 +116,22 @@ def insert_into_db(products, reviews, customers, similars, categories, conn, bat
             "INSERT INTO Cliente (id_cliente) VALUES (%s) ON CONFLICT DO NOTHING;",
             [(c,) for c in customers], batch_size, "clientes")
 
-        # Similares (precisa mapear asin -> id_produto)
-        cur.execute("SELECT id_produto, asin FROM Produto;")
-        asin_map = {asin: pid for pid, asin in cur.fetchall()}
-        sim_values = []
-        for pid, sim_asin in similars:
-            if sim_asin in asin_map:
-                sim_values.append((pid, asin_map[sim_asin]))
+        # Similares (somente válidos)
+        cur.execute("SELECT asin FROM Produto;")
+        valid_asins = {row[0].strip() for row in cur.fetchall()}
+
+        sim_values = [(asin, sim_asin) for asin, sim_asin in similars
+                      if asin in valid_asins and sim_asin in valid_asins]
+
         count_sim = batch_insert(cur,
-            "INSERT INTO \"Similar\" (id_produto, id_produto_similar) VALUES (%s,%s) ON CONFLICT DO NOTHING;",
+            "INSERT INTO \"Similar\" (id_asin, id_asin_similar) VALUES (%s,%s) ON CONFLICT DO NOTHING;",
             sim_values, batch_size, "similares")
 
         # Avaliações com COPY
         tmpfile = tempfile.NamedTemporaryFile(delete=False, mode="w", newline="", suffix=".csv")
         writer = csv.writer(tmpfile)
         for r in reviews:
-            writer.writerow(r)  # (id_produto, id_cliente, data, hora, rating, votos, helpful)
+            writer.writerow(r)  # (asin, id_cliente, data, hora, rating, votos, helpful)
         tmpfile.close()
 
         with open(tmpfile.name, "r", encoding="utf-8") as f:
@@ -162,16 +160,16 @@ def main():
     parser.add_argument("--db-user", required=True)
     parser.add_argument("--db-pass", required=True)
     parser.add_argument("--input", required=True)
-    parser.add_argument("--batch-size", type=int, default=10000)
+    parser.add_argument("--batch-size", type=int, default=50000, help="Tamanho do batch de inserts (default=50000)")
     args = parser.parse_args()
 
     print(f"[INFO] Lendo arquivo {args.input}...")
-    products, reviews, customers, similars, categories = parse_file(args.input)
+    products, reviews, customers, similars = parse_file(args.input)
     print(f"[INFO] Produtos: {len(products)}, Reviews: {len(reviews)}, Clientes: {len(customers)}, Similares: {len(similars)}")
 
     conn_str = f"host={args.db_host} port={args.db_port} dbname={args.db_name} user={args.db_user} password={args.db_pass}"
     with psycopg.connect(conn_str) as conn:
-        insert_into_db(products, reviews, customers, similars, categories, conn, args.batch_size)
+        insert_into_db(products, reviews, customers, similars, conn, args.batch_size)
 
     print("[INFO] Concluído com sucesso!")
 
