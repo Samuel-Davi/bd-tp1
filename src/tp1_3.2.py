@@ -133,7 +133,7 @@ def insert_into_db(products, reviews, customers, similars, conn, batch_size=1000
             "INSERT INTO Cliente (id_cliente) VALUES (%s) ON CONFLICT DO NOTHING;",
             [(c,) for c in customers], batch_size, "clientes")
 
-        # Similares (somente válidos)
+        # Similares 
         cur.execute("SELECT asin FROM Produto;")
         valid_asins = {row[0].strip() for row in cur.fetchall()}
 
